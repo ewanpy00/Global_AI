@@ -16,6 +16,7 @@ import (
 
 	"github.com/ewanpy00/Global_AI/backend/internal/config"
 	"github.com/ewanpy00/Global_AI/backend/internal/demo"
+	"github.com/ewanpy00/Global_AI/backend/internal/document"
 	"github.com/ewanpy00/Global_AI/backend/internal/llm"
 	"github.com/ewanpy00/Global_AI/backend/internal/plugin"
 	"github.com/ewanpy00/Global_AI/backend/internal/search"
@@ -38,7 +39,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	srv := &server.Server{Cfg: cfg, Samples: server.DefaultSamples(cfg.Demo)}
+	docs := document.NewEngine()
+	docs.Warmup() // compiles PDFium (WebAssembly) in the background
+	defer docs.Close()
+	srv := &server.Server{Cfg: cfg, Samples: server.DefaultSamples(cfg.Demo), Docs: docs, DocStore: document.NewStore(32)}
 	engine := &verify.Engine{MaxClaims: cfg.MaxClaims, Concurrency: cfg.Concurrency}
 
 	if cfg.Demo {

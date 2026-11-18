@@ -61,6 +61,9 @@ type Claim struct {
 	byteStart, byteEnd int
 }
 
+// Span returns the claim's byte offsets in the checked text (meaningful when Located).
+func (c Claim) Span() (start, end int) { return c.byteStart, c.byteEnd }
+
 type Verdict string
 
 const (

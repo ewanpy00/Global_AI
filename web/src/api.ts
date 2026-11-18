@@ -97,7 +97,28 @@ export interface Report {
 export interface Sample {
   id: string;
   title: string;
+  heading: string;
   note: string;
+  text: string;
+}
+
+/** A highlight rectangle on a PDF page, as fractions of the page size from the top-left corner. */
+export interface Box {
+  page: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** An uploaded PDF (backend/internal/document.Doc). */
+export interface DocInfo {
+  id: string;
+  name: string;
+  size: number;
+  pages: { index: number; width: number; height: number }[];
+  total_pages: number;
+  checked_pages: number;
   text: string;
 }
 
@@ -112,6 +133,7 @@ export interface AppConfig {
   max_chars: number;
   samples: Sample[];
   warnings: string[] | null;
+  documents?: { available: boolean; max_mb: number; max_pages: number };
 }
 
 export type StreamEvent =
@@ -121,6 +143,7 @@ export type StreamEvent =
   | { type: "claim_result"; data: { claim_id: string; result: Verification } }
   | { type: "trace"; data: TraceEntry }
   | { type: "summary"; data: Summary }
+  | { type: "boxes"; data: { boxes: Record<string, Box[]> } }
   | { type: "report"; data: Report }
   | { type: "error"; data: { message: string } };
 
@@ -131,23 +154,59 @@ export async function fetchConfig(): Promise<AppConfig> {
 }
 
 /** POSTs the answer and calls onEvent for every Server-Sent Event the backend streams. */
-export async function streamVerify(text: string, onEvent: (ev: StreamEvent) => void, signal: AbortSignal): Promise<void> {
-  const res = await fetch("/api/verify", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
+export function streamVerify(text: string, onEvent: (ev: StreamEvent) => void, signal: AbortSignal): Promise<void> {
+  return streamSSE(
+    "/api/verify",
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) },
+    onEvent,
     signal,
-  });
-  if (!res.ok || !res.body) {
-    let msg = `HTTP ${res.status}`;
-    try {
-      const j = await res.json();
-      msg = j?.error?.message ?? msg;
-    } catch {
-      /* keep status text */
-    }
-    throw new Error(msg);
+  );
+}
+
+/** Checks an uploaded document; the stream also carries a "boxes" event with claim positions. */
+export function streamDocumentVerify(id: string, onEvent: (ev: StreamEvent) => void, signal: AbortSignal): Promise<void> {
+  return streamSSE(`/api/documents/${id}/verify`, { method: "POST" }, onEvent, signal);
+}
+
+async function errorMessage(res: Response): Promise<string> {
+  try {
+    const j = await res.json();
+    return j?.error?.message ?? `HTTP ${res.status}`;
+  } catch {
+    return `HTTP ${res.status}`;
   }
+}
+
+export async function uploadDocument(file: File): Promise<DocInfo> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch("/api/documents", { method: "POST", body: form });
+  if (!res.ok) throw new Error(await errorMessage(res));
+  return res.json();
+}
+
+export async function sampleDocument(): Promise<DocInfo> {
+  const res = await fetch("/api/documents/sample", { method: "POST" });
+  if (!res.ok) throw new Error(await errorMessage(res));
+  return res.json();
+}
+
+export const documentURL = {
+  page: (id: string, n: number) => `/api/documents/${id}/pages/${n}`,
+  original: (id: string) => `/api/documents/${id}/file?inline=1`,
+  annotated: (id: string, inline = false) => `/api/documents/${id}/annotated${inline ? "?inline=1" : ""}`,
+  corrected: (id: string, claims: string[], inline = false) => {
+    const q = new URLSearchParams();
+    if (claims.length) q.set("claims", claims.join(","));
+    if (inline) q.set("inline", "1");
+    const qs = q.toString();
+    return `/api/documents/${id}/corrected${qs ? `?${qs}` : ""}`;
+  },
+};
+
+async function streamSSE(url: string, init: RequestInit, onEvent: (ev: StreamEvent) => void, signal: AbortSignal): Promise<void> {
+  const res = await fetch(url, { ...init, signal });
+  if (!res.ok || !res.body) throw new Error(await errorMessage(res));
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
   let buf = "";
   for (;;) {

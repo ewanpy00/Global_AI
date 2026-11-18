@@ -1160,3 +1160,321 @@ main {
 .banner-top {
   margin: 0 0 14px;
 }
+
+/* ---------- documents (PDF) ---------- */
+
+.docs-empty {
+  display: grid;
+  gap: 18px;
+  max-width: 980px;
+  margin: 0 auto;
+}
+.dropzone {
+  padding: 40px 32px 30px;
+  text-align: center;
+  border: 1.5px dashed var(--line-2);
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(34, 211, 238, 0.08), transparent 60%),
+    linear-gradient(180deg, var(--panel), var(--bg-2));
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.dropzone.is-drag {
+  border-color: var(--accent);
+  background: rgba(34, 211, 238, 0.07);
+}
+.dropzone h2 {
+  font-size: 22px;
+  margin: 18px 0 8px;
+}
+.dropzone > p {
+  max-width: 660px;
+  margin: 0 auto 18px;
+  line-height: 1.55;
+}
+.dropzone .banner {
+  max-width: 560px;
+  margin: 14px auto 0;
+}
+.dz-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.dz-loading {
+  color: var(--accent);
+  font-size: 13.5px;
+}
+.doc-glyph {
+  width: 58px;
+  height: 72px;
+  margin: 0 auto;
+  padding: 14px 10px;
+  border-radius: 8px;
+  border: 1.5px solid var(--line-2);
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+.doc-glyph span {
+  height: 4px;
+  border-radius: 2px;
+  background: #cbd5e1;
+}
+.doc-glyph span:nth-child(2n) {
+  width: 70%;
+}
+.doc-glyph .g-stale {
+  background: #f87171;
+}
+.doc-glyph .g-review {
+  background: #fbbf24;
+}
+.doc-glyph .g-fresh {
+  background: #34d399;
+}
+.doc-outputs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.output {
+  padding: 16px 18px;
+}
+.output h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  margin: 0 0 6px;
+}
+.output p {
+  margin: 0;
+  line-height: 1.5;
+}
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+.dot-fresh {
+  background: var(--fresh);
+}
+.dot-review {
+  background: var(--review);
+}
+.dot-stale {
+  background: var(--stale);
+}
+
+.doc-panel .panel-head {
+  min-width: 0;
+}
+.doc-icon {
+  font: 700 10px var(--mono);
+  color: #fecaca;
+  background: var(--stale-bg);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  border-radius: 6px;
+  padding: 7px 6px;
+  flex: none;
+}
+.doc-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.doc-title strong {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.doc-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 18px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.doc-toolbar .segmented {
+  margin: 10px 0 0;
+}
+.doc-toolbar .segmented button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.doc-toolbar > .btn {
+  margin-top: 10px;
+  text-decoration: none;
+}
+.answer-foot a.btn {
+  text-decoration: none;
+}
+
+.pdf-scroll {
+  max-height: calc(100vh - 250px);
+  min-height: 420px;
+  overflow: auto;
+  padding: 20px;
+  background: #05080c;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+.pdf-page {
+  position: relative;
+  width: 100%;
+  max-width: 860px;
+  flex: none;
+  background: #fff;
+  border-radius: 3px;
+  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.55);
+}
+.pdf-page img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 3px;
+  user-select: none;
+}
+.pdf-box {
+  --box-bg: rgba(100, 116, 139, 0.25);
+  --box-line: #64748b;
+  position: absolute;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  border-radius: 3px;
+}
+/* The fill is multiplied onto the page like a highlighter, so the text stays crisp. */
+.pdf-box::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 3px;
+  background: var(--box-bg);
+  box-shadow: inset 0 -2px 0 var(--box-line);
+  mix-blend-mode: multiply;
+  transition:
+    background 0.3s,
+    box-shadow 0.3s;
+}
+.box-fresh {
+  --box-bg: rgba(52, 211, 153, 0.38);
+  --box-line: #059669;
+}
+.box-review {
+  --box-bg: rgba(251, 191, 36, 0.45);
+  --box-line: #d97706;
+}
+.box-stale {
+  --box-bg: rgba(248, 113, 113, 0.42);
+  --box-line: #dc2626;
+}
+.box-fixed {
+  --box-bg: rgba(52, 211, 153, 0.22);
+  --box-line: #059669;
+}
+.box-fixed::before {
+  box-shadow: inset 0 0 0 1.5px var(--box-line);
+}
+.pdf-box.is-active {
+  outline: 2px solid #0891b2;
+  outline-offset: 2px;
+}
+.pdf-box.is-working::before {
+  animation: box-pulse 1.1s ease-in-out infinite;
+}
+@keyframes box-pulse {
+  50% {
+    background: rgba(34, 211, 238, 0.4);
+  }
+}
+.pdf-tag {
+  position: absolute;
+  left: -11px;
+  top: -12px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  font: 600 9px/14px var(--mono);
+  color: #fff;
+  background: var(--box-line);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.pdf-scan {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.pdf-scan::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 16%;
+  background: linear-gradient(180deg, transparent, rgba(34, 211, 238, 0.25), transparent);
+  animation: pdf-scan 1.8s ease-in-out infinite;
+}
+@keyframes pdf-scan {
+  from {
+    top: -16%;
+  }
+  to {
+    top: 100%;
+  }
+}
+.pdf-page-num {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  font: 11px var(--mono);
+  color: #64748b;
+  background: rgba(255, 255, 255, 0.85);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.pdf-note {
+  margin: 0;
+  max-width: 860px;
+}
+.pdf-frame {
+  display: block;
+  width: 100%;
+  height: calc(100vh - 250px);
+  min-height: 420px;
+  border: 0;
+  background: #3f4347;
+}
+
+@media (max-width: 720px) {
+  .doc-outputs {
+    grid-template-columns: 1fr;
+  }
+  .dropzone {
+    padding: 28px 16px 22px;
+  }
+  .pdf-scroll {
+    padding: 12px;
+    max-height: none;
+    min-height: 0;
+  }
+  .doc-toolbar {
+    flex-wrap: wrap;
+  }
+  .doc-toolbar .segmented {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+}

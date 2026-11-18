@@ -46,6 +46,9 @@ func ApplyFixes(r *Report) (string, []Edit) {
 	return text, edits
 }
 
+// BestSource returns the URL to cite for this verdict (official, contradicting sources first).
+func (v *Verification) BestSource() string { return bestSourceURL(v) }
+
 // bestSourceURL picks the source to cite for a correction: official contradicting sources first.
 func bestSourceURL(v *Verification) string {
 	best, bestRank := "", -1

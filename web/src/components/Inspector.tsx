@@ -1,9 +1,9 @@
 import { useEffect, useReducer, useRef, useState } from "react";
-import { LABEL_TEXT, VERDICT_LABEL, streamVerify, type AppConfig, type Verdict } from "../api";
+import { streamVerify, type AppConfig } from "../api";
 import { correctedText, initialRun, isFixable, reducer } from "../state";
 import { AnnotatedText } from "./AnnotatedText";
 import { ClaimCard } from "./ClaimCard";
-import { ScoreGauge } from "./ScoreGauge";
+import { SummaryPanel } from "./SummaryPanel";
 import { TracePanel } from "./TracePanel";
 
 interface Props {
@@ -11,8 +11,6 @@ interface Props {
   /** Text pushed from another view (e.g. a connector chat reply) to check right away. */
   incoming: { text: string; nonce: number } | null;
 }
-
-const VERDICT_ORDER: Verdict[] = ["outdated", "incorrect", "unverifiable", "current"];
 
 export function Inspector({ config, incoming }: Props) {
   const [run, dispatch] = useReducer(reducer, initialRun);
@@ -78,7 +76,6 @@ export function Inspector({ config, incoming }: Props) {
     URL.revokeObjectURL(a.href);
   }
 
-  const done = run.claims.filter((c) => c.status === "done").length;
   const fixable = run.claims.filter(isFixable);
   const focus = hover ?? active;
 
@@ -179,58 +176,19 @@ export function Inspector({ config, incoming }: Props) {
       </section>
 
       <aside className="side">
-        <section className="panel summary">
-          <ScoreGauge
-            score={run.summary ? run.summary.score : null}
-            label={run.summary?.label}
-            caption={run.summary ? "freshness" : undefined}
-          />
-          <div className="summary-body">
-            {run.phase === "idle" && (
-              <>
-                <h3>Freshness score</h3>
-                <p className="muted small">
-                  Finds time-sensitive claims (prices, versions, laws, leadership), re-checks each one against live web sources and scores
-                  how current it is.
-                </p>
-              </>
-            )}
-            {run.phase === "extracting" && (
-              <>
-                <h3>Finding time-sensitive claims…</h3>
-                <p className="muted small mono">{config.models.extract} via Bifrost</p>
-              </>
-            )}
-            {run.phase === "verifying" && (
-              <>
-                <h3>
-                  Verifying {run.claims.length} claims · {done} done
-                </h3>
-                <div className="progress">
-                  <div style={{ width: `${run.claims.length ? (done / run.claims.length) * 100 : 0}%` }} />
-                </div>
-              </>
-            )}
-            {run.summary && (
-              <>
-                <h3 className={`label-${run.summary.label}`}>
-                  {run.summary.total === 0 ? "No time-sensitive claims" : LABEL_TEXT[run.summary.label]}
-                </h3>
-                <div className="verdict-chips">
-                  {VERDICT_ORDER.filter((v) => run.summary!.by_verdict[v]).map((v) => (
-                    <span key={v} className={`vchip vchip-${v}`}>
-                      {run.summary!.by_verdict[v]} {VERDICT_LABEL[v].toLowerCase()}
-                    </span>
-                  ))}
-                </div>
-                <p className="muted small">
-                  {run.summary.total} claims checked in {(run.summary.duration_ms / 1000).toFixed(1)} s
-                </p>
-              </>
-            )}
-            {run.phase === "error" && run.claims.length === 0 && <h3 className="label-stale">Check failed</h3>}
-          </div>
-        </section>
+        <SummaryPanel
+          run={run}
+          config={config}
+          idle={
+            <>
+              <h3>Freshness score</h3>
+              <p className="muted small">
+                Finds time-sensitive claims (prices, versions, laws, leadership), re-checks each one against live web sources and scores
+                how current it is.
+              </p>
+            </>
+          }
+        />
 
         <div className="cards">
           {run.claims.map((c) => (

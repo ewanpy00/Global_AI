@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { fetchConfig, type AppConfig } from "./api";
 import { Connector } from "./components/Connector";
+import { Documents } from "./components/Documents";
 import { Inspector } from "./components/Inspector";
 
-type Tab = "inspector" | "connector";
+type Tab = "inspector" | "documents" | "connector";
 
 export function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
@@ -29,6 +30,11 @@ export function App() {
           <button className={tab === "inspector" ? "is-on" : ""} onClick={() => setTab("inspector")}>
             Inspector
           </button>
+          {config?.documents?.available !== false && (
+            <button className={tab === "documents" ? "is-on" : ""} onClick={() => setTab("documents")}>
+              Documents
+            </button>
+          )}
           <button className={tab === "connector" ? "is-on" : ""} onClick={() => setTab("connector")}>
             Connector
           </button>
@@ -58,6 +64,9 @@ export function App() {
           <>
             <div hidden={tab !== "inspector"}>
               <Inspector config={config} incoming={incoming} />
+            </div>
+            <div hidden={tab !== "documents"}>
+              <Documents config={config} />
             </div>
             <div hidden={tab !== "connector"}>
               <Connector

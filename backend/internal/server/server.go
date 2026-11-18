@@ -4,6 +4,7 @@
 //	GET  /api/config             what is configured (models, search, demo mode, samples)
 //	POST /v1/chat/completions    OpenAI-compatible connector: chat through Bifrost + freshness plugin
 //	GET  /v1/models              model list for OpenAI clients
+//	/api/documents/...           PDF checking (see documents.go)
 //	/                            the built web UI
 package server
 
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/ewanpy00/Global_AI/backend/internal/config"
+	"github.com/ewanpy00/Global_AI/backend/internal/document"
 	"github.com/ewanpy00/Global_AI/backend/internal/llm"
 	"github.com/ewanpy00/Global_AI/backend/internal/verify"
 )
@@ -32,13 +34,19 @@ type Server struct {
 	Samples []Sample
 	// Warnings are configuration problems found at startup (e.g. a model the provider does not offer).
 	Warnings []string
+	// Docs and DocStore enable the PDF endpoints (nil disables them).
+	Docs     *document.Engine
+	DocStore *document.Store
+
+	sample samplePDF
 }
 
 type Sample struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
-	Note  string `json:"note"`
-	Text  string `json:"text"`
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	Heading string `json:"heading"` // title when the sample is typeset as a PDF document
+	Note    string `json:"note"`
+	Text    string `json:"text"`
 }
 
 const maxBody = 1 << 20
@@ -52,6 +60,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/verify", s.handleVerify)
 	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("GET /v1/models", s.handleModels)
+	s.documentRoutes(mux)
 	mux.Handle("/", s.staticHandler())
 	return withCORS(withLogging(mux))
 }
@@ -85,6 +94,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, _ *http.Request) {
 		"samples":        s.Samples,
 		"freshness_band": map[string]int{"fresh": 75, "stale": 45},
 		"warnings":       s.Warnings,
+		"documents":      map[string]any{"available": s.Docs != nil, "max_mb": document.MaxBytes >> 20, "max_pages": document.MaxPages},
 	})
 }
 
@@ -172,7 +182,7 @@ func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Freshgate-Mode")
-		w.Header().Set("Access-Control-Expose-Headers", "X-Freshgate-Score, X-Freshgate-Label, X-Freshgate-Report")
+		w.Header().Set("Access-Control-Expose-Headers", "X-Freshgate-Score, X-Freshgate-Label, X-Freshgate-Report, X-Freshgate-Edits, X-Freshgate-Document, Content-Disposition")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

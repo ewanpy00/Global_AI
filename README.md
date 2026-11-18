@@ -16,7 +16,7 @@ Built for the Geek Room Global AI Hackathon 2026, problem statement 06 (Tavily).
 | Live verification | Each claim gets a Tavily search with publish dates. A strong model (via Bifrost) compares the claim with the sources and returns `current`, `outdated`, `incorrect` or `unverifiable`, the current value, per-source stance, and a corrected sentence. |
 | Freshness scoring | A transparent 0–100 score per claim from verdict, evidence strength, source recency (decayed by a per-category half-life) and source authority, plus a weighted score for the whole answer. |
 
-Two ways to use it:
+Three ways to use it:
 
 1. **Inspector** (web UI): paste any AI answer. Claims are highlighted in place (green, amber,
    red) and verified in parallel while you watch. Each card shows the current value, the
@@ -26,6 +26,11 @@ Two ways to use it:
    `http://localhost:8080/v1` instead of the model provider. Every answer goes through Bifrost,
    and a Bifrost `PostLLMHook` plugin verifies it before it reaches the client. It either
    annotates the answer with a footnote, corrects it in place, or only attaches the report.
+3. **Documents** (PDF): upload a report, brief or proposal that an agent generated. The pages
+   are shown with every claim highlighted on the page as it is verified. You get the PDF back
+   either **annotated** (a highlight and a reviewer note per claim, plus a report page) or
+   **corrected** (outdated statements rewritten in place with current facts, each change
+   marked and sourced). Agents can do the same in one call: `POST /api/documents/check`.
 
 ## How Tavily and Bifrost are used
 
@@ -55,6 +60,38 @@ Two ways to use it:
 recency can be scored, `include_answer` as a hint to the judge, and `advanced` depth by
 default. Results are cached for an hour, so repeated demo runs stay fast and don't use extra
 credits.
+
+## PDF documents
+
+PDF handling runs on [PDFium](https://pdfium.googlesource.com/pdfium/) compiled to
+WebAssembly ([go-pdfium](https://github.com/klippa-app/go-pdfium), executed in-process by
+wazero), so the Go binary needs no CGO, no system libraries and no external services.
+
+1. **Read.** The text layer is extracted with the page and position of every character, so a
+   claim found in the text maps straight back to rectangles on the page.
+2. **Check.** The text goes through the same pipeline as a chat answer (extract → Tavily →
+   judge → score). The stream adds a `boxes` event right after the claims are found, so the
+   viewer draws them on the pages while they are being verified.
+3. **Annotated PDF.** The original file plus a standard Highlight annotation on each claim
+   (red outdated, yellow unverified, green current) whose note holds the verdict, current
+   value, suggested fix and source, and a report page at the end. Opens in any PDF viewer.
+4. **Corrected PDF.** Each outdated claim is covered and the corrected wording is typeset on
+   the same lines in the claim's size and colour. The rest of the line moves with it, and the
+   new text may use the blank space up to the paragraph's right edge. If it still doesn't fit,
+   it is condensed by up to 20 %, then shrunk. Every change carries a green highlight whose
+   note keeps the original wording and the source.
+
+```bash
+# one call from an agent: PDF in, corrected PDF out (or output=annotated | json)
+curl -s --data-binary @report.pdf -H 'Content-Type: application/pdf' \
+  'http://localhost:8080/api/documents/check?output=corrected' -o report-checked.pdf
+```
+
+Limits: PDFs need a text layer (no OCR for scans yet); the text of the first pages up to
+60,000 characters is checked; uploads are capped at 25 MB and kept in memory only. The
+corrected copy is for reading: the original words remain in the file under the new ones
+(a PDF text run cannot be edited reliably in place), so it is not a redaction. The
+replacement font is Go Regular, not the document's own font.
 
 ## Scoring
 
@@ -143,6 +180,13 @@ as a single chunk.
 | `POST /api/verify` `{"text": "..."}` | Server-Sent Events: `stage`, `claims`, `claim_status`, `trace`, `claim_result`, `summary`, then `report` (full JSON) |
 | `GET /api/config` | Models, search settings, demo flag, sample answers |
 | `POST /v1/chat/completions` | OpenAI-compatible connector (live mode only) |
+| `POST /api/documents` | Upload a PDF (multipart `file` or raw `application/pdf` body); returns pages and text |
+| `POST /api/documents/sample` | The first sample answer typeset as a PDF |
+| `GET /api/documents/{id}/pages/{n}` | Page `n` rendered as PNG |
+| `POST /api/documents/{id}/verify` | Same SSE stream as `/api/verify`, plus `boxes` (claim positions on the pages) |
+| `GET /api/documents/{id}/annotated` | Annotated PDF (`?inline=1` to view in the browser) |
+| `GET /api/documents/{id}/corrected` | Corrected PDF; `?claims=c1,c3` limits which fixes are applied |
+| `POST /api/documents/check` | One call: PDF in, `?output=annotated\|corrected\|json` out; score in `X-Freshgate-Score` |
 | `GET /v1/models` | Configured models |
 
 ## Layout
@@ -154,15 +198,16 @@ backend/
   internal/plugin/      Bifrost LLMPlugin: the connector (annotate / correct / report)
   internal/verify/      pipeline, prompts, span location, scoring, fixes, footnote
   internal/search/      Tavily client with cache
+  internal/document/    PDFium (WebAssembly): text with positions, page images, annotations,
+                        in-place corrections, report page
   internal/demo/        offline fixtures for demo mode
   internal/server/      HTTP: SSE, OpenAI-compatible endpoint, static UI, integration tests
-web/                    React + Vite UI (Inspector, Connector playground)
+web/                    React + Vite UI (Inspector, Documents, Connector playground)
 ```
 
 ## Roadmap
 
-- Documents: PDF / DOCX upload. Extract the text, run the same pipeline, return an annotated
-  PDF and a corrected copy.
+- Documents: DOCX, OCR for scanned PDFs, and true text replacement (redaction) in PDFs.
 - Bifrost semantic cache for repeated claims across users.
 - Domain allow-lists per category (official docs for API claims, regulators for laws).
 - Browser extension that overlays highlights on ChatGPT and Claude.

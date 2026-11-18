@@ -146,8 +146,9 @@ func (d *LLM) Complete(ctx context.Context, req llm.Request) (llm.Response, erro
 func extractClaims(input string) []map[string]string {
 	var claims []map[string]string
 	if strings.Contains(input, "Nimbus") {
+		flat := squash(input)
 		for _, f := range fixtures {
-			if strings.Contains(input, f.claim["text"]) {
+			if strings.Contains(flat, squash(f.claim["text"])) {
 				claims = append(claims, f.claim)
 			}
 		}
@@ -159,8 +160,9 @@ func extractClaims(input string) []map[string]string {
 }
 
 var (
-	sentenceRe = regexp.MustCompile(`[^.!?\n]+[.!?]?`)
-	signalRe   = regexp.MustCompile(`(?i)(\$|€|£|\d|\bv\d|\bversion\b|\bceo\b|\bprice|\bcost|\bplan\b|\blaw\b|\bact\b|\bregulat|\blatest\b|\bcurrent|\breleased?\b|\bper month\b)`)
+	sentenceRe  = regexp.MustCompile(`[^.!?\n]+[.!?]?`)
+	softBreakRe = regexp.MustCompile(`([^\n])\n([^\n])`)
+	signalRe    = regexp.MustCompile(`(?i)(\$|€|£|\d|\bv\d|\bversion\b|\bceo\b|\bprice|\bcost|\bplan\b|\blaw\b|\bact\b|\bregulat|\blatest\b|\bcurrent|\breleased?\b|\bper month\b)`)
 )
 
 // heuristicClaims picks sentences that look time-sensitive, for texts without fixtures.
@@ -169,6 +171,8 @@ func heuristicClaims(input string) []map[string]string {
 		input = input[i+len("<answer>"):]
 	}
 	input = strings.TrimSuffix(strings.TrimSpace(input), "</answer>")
+	// Text from PDFs breaks lines mid-sentence; join single line breaks.
+	input = softBreakRe.ReplaceAllString(softBreakRe.ReplaceAllString(input, "$1 $2"), "$1 $2")
 	var out []map[string]string
 	for _, s := range sentenceRe.FindAllString(input, -1) {
 		s = strings.TrimSpace(strings.Trim(strings.TrimSpace(s), "*#-"))
@@ -202,8 +206,9 @@ func guessCategory(s string) string {
 }
 
 func judge(input string) map[string]any {
+	flat := squash(input)
 	for _, f := range fixtures {
-		if strings.Contains(input, fmt.Sprintf("Claim: %q", f.claim["text"])) {
+		if strings.Contains(flat, squash(fmt.Sprintf("Claim: %q", f.claim["text"]))) {
 			return f.judgment
 		}
 	}
@@ -243,4 +248,11 @@ func sleep(ctx context.Context, d time.Duration) error {
 	case <-t.C:
 		return nil
 	}
+}
+
+// squash makes fixture matching ignore line breaks and spacing, including the escaped "\n"
+// that %q writes into prompts, so the sample also matches after a trip through a PDF.
+func squash(s string) string {
+	s = strings.NewReplacer(`\n`, " ", `\t`, " ").Replace(s)
+	return strings.Join(strings.Fields(s), " ")
 }

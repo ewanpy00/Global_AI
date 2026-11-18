@@ -1,4 +1,4 @@
-import type { Claim, Report, StreamEvent, Summary, TraceEntry, Verification } from "./api";
+import type { Box, Claim, Report, StreamEvent, Summary, TraceEntry, Verification } from "./api";
 
 export type ClaimStatus = "queued" | "searching" | "judging" | "done";
 
@@ -19,9 +19,11 @@ export interface RunState {
   error?: string;
   /** Claim ids whose correction the user accepted. */
   applied: string[];
+  /** Where each claim sits on the pages (documents only). */
+  boxes: Record<string, Box[]>;
 }
 
-export const initialRun: RunState = { phase: "idle", text: "", claims: [], trace: [], applied: [] };
+export const initialRun: RunState = { phase: "idle", text: "", claims: [], trace: [], applied: [], boxes: {} };
 
 export type Action =
   | { type: "start"; text: string }
@@ -77,6 +79,8 @@ function applyEvent(s: RunState, ev: StreamEvent): RunState {
       return { ...s, trace: [...s.trace, ev.data] };
     case "summary":
       return { ...s, summary: ev.data };
+    case "boxes":
+      return { ...s, boxes: ev.data.boxes ?? {} };
     case "report":
       return { ...s, phase: "done", report: ev.data, summary: ev.data.summary };
     case "error":
