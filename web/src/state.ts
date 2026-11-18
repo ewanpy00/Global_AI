@@ -1,6 +1,6 @@
 import type { Box, Claim, Report, StreamEvent, Summary, TraceEntry, Verification } from "./api";
 
-export type ClaimStatus = "queued" | "searching" | "judging" | "done";
+export type ClaimStatus = "queued" | "searching" | "fetching" | "judging" | "following_up" | "done";
 
 export interface ClaimState extends Claim {
   status: ClaimStatus;

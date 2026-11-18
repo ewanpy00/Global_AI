@@ -43,6 +43,10 @@ type Config struct {
 	JudgeModel   ModelRef
 	ChatModel    ModelRef // default model for the connector when a client omits the provider
 	Fallbacks    []ModelRef
+	// JuryModel is an independent second judge, ideally on another provider. Empty disables it.
+	JuryModel ModelRef
+	// ArenaModels are the contestants of the Staleness Arena (default: every distinct configured model).
+	ArenaModels []ModelRef
 
 	TavilyKey         string
 	TavilySearchDepth string
@@ -58,6 +62,12 @@ type Config struct {
 	VerifyTimeout time.Duration
 	// MaxRetries is how often Bifrost retries a failed provider call (429s on free tiers).
 	MaxRetries int
+	// CacheTTLMinutes is how long the Bifrost ledger plugin caches identical pipeline calls (0 = off).
+	CacheTTLMinutes int
+	// TokenBudget caps the tokens one verification run may spend (0 = unlimited).
+	TokenBudget int
+	// Disabled pipeline features: official, fetch, followup, grounding, share, jury.
+	Disabled map[string]bool
 
 	// Demo is true when no live keys are configured: the pipeline runs on bundled fixtures.
 	Demo bool
@@ -88,6 +98,9 @@ func Load() (*Config, error) {
 		ConnectorMode:     env("FRESHGATE_CONNECTOR_MODE", "annotate"),
 		VerifyTimeout:     time.Duration(envInt("FRESHGATE_VERIFY_TIMEOUT_SEC", 120)) * time.Second,
 		MaxRetries:        envIntAllowZero("FRESHGATE_MAX_RETRIES", 3),
+		CacheTTLMinutes:   envIntAllowZero("FRESHGATE_LLM_CACHE_MIN", 60),
+		TokenBudget:       envIntAllowZero("FRESHGATE_TOKEN_BUDGET", 250_000),
+		Disabled:          map[string]bool{},
 		WebDir:            env("FRESHGATE_WEB_DIR", "../web/dist"),
 	}
 	for provider, name := range providerEnv {
@@ -130,6 +143,40 @@ func Load() (*Config, error) {
 		c.Fallbacks = append(c.Fallbacks, ref)
 	}
 
+	switch jury := strings.TrimSpace(os.Getenv("FRESHGATE_JURY_MODEL")); jury {
+	case "off", "none", "0":
+	case "":
+		if def := defaultJury(c.ProviderKeys, c.JudgeModel); def != "" {
+			c.JuryModel, _ = ParseModelRef(def)
+		}
+	default:
+		if c.JuryModel, err = ParseModelRef(jury); err != nil {
+			return nil, err
+		}
+	}
+	for _, s := range splitList(os.Getenv("FRESHGATE_ARENA_MODELS")) {
+		ref, err := ParseModelRef(s)
+		if err != nil {
+			return nil, err
+		}
+		c.ArenaModels = append(c.ArenaModels, ref)
+	}
+	if len(c.ArenaModels) == 0 {
+		seen := map[ModelRef]bool{}
+		for _, m := range append([]ModelRef{c.ChatModel, c.JudgeModel, c.ExtractModel, c.JuryModel}, c.Fallbacks...) {
+			if m.Model != "" && !seen[m] {
+				seen[m] = true
+				c.ArenaModels = append(c.ArenaModels, m)
+			}
+		}
+	}
+	for _, f := range splitList(os.Getenv("FRESHGATE_DISABLE")) {
+		c.Disabled[strings.ToLower(f)] = true
+	}
+	if c.Disabled["jury"] {
+		c.JuryModel = ModelRef{}
+	}
+
 	switch c.ConnectorMode {
 	case "off", "report", "annotate", "correct":
 	default:
@@ -163,6 +210,23 @@ func defaultModels(keys map[string]string) (extract, judge string) {
 	}
 	// OpenRouter has no safe default: free models carry a ":free" suffix and change weekly.
 	return "", ""
+}
+
+// providerOrder is the preference order for picking defaults.
+var providerOrder = []string{"anthropic", "openai", "groq", "gemini", "mistral", "ollama"}
+
+// defaultJury picks a second judge on a different provider than the main judge, so the two
+// verdicts are independent (different training data, different cut-off). With one provider there
+// is no default jury: a second opinion from the same model family adds little.
+func defaultJury(keys map[string]string, judge ModelRef) string {
+	for _, p := range providerOrder {
+		if _, ok := keys[p]; !ok || p == judge.Provider || p == "ollama" {
+			continue
+		}
+		_, j := defaultModels(map[string]string{p: "x"})
+		return j
+	}
+	return ""
 }
 
 func env(key, def string) string {

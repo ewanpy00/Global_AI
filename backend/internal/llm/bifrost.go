@@ -29,6 +29,7 @@ func IsInternal(ctx *schemas.BifrostContext) bool {
 // the pipeline's own calls (Complete) and the connector's pass-through chat calls (Chat).
 type Gateway struct {
 	bf        *bifrost.Bifrost
+	Ledger    *Ledger
 	routes    map[Purpose]config.ModelRef
 	fallbacks []config.ModelRef
 	chat      config.ModelRef
@@ -46,20 +47,28 @@ func NewGateway(ctx context.Context, cfg *config.Config, plugins ...schemas.LLMP
 	for p, u := range cfg.ProviderBaseURLs {
 		acc.baseURLs[schemas.ModelProvider(p)] = u
 	}
+	// The ledger runs first so a cache hit or a spent budget stops the call before anything else.
+	ledger := NewLedger(time.Duration(cfg.CacheTTLMinutes)*time.Minute, 4096)
 	bf, err := bifrost.Init(ctx, schemas.BifrostConfig{
 		Account:    acc,
-		LLMPlugins: plugins,
+		LLMPlugins: append([]schemas.LLMPlugin{ledger}, plugins...),
 		Logger:     bifrost.NewDefaultLogger(schemas.LogLevelWarn),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("init bifrost: %w", err)
 	}
+	routes := map[Purpose]config.ModelRef{
+		PurposeExtract: cfg.ExtractModel,
+		PurposeJudge:   cfg.JudgeModel,
+		PurposeAnswer:  cfg.ChatModel,
+	}
+	if cfg.JuryModel.Model != "" {
+		routes[PurposeJury] = cfg.JuryModel
+	}
 	return &Gateway{
-		bf: bf,
-		routes: map[Purpose]config.ModelRef{
-			PurposeExtract: cfg.ExtractModel,
-			PurposeJudge:   cfg.JudgeModel,
-		},
+		bf:        bf,
+		Ledger:    ledger,
+		routes:    routes,
 		fallbacks: cfg.Fallbacks,
 		chat:      cfg.ChatModel,
 	}, nil
@@ -70,12 +79,23 @@ func (g *Gateway) Shutdown() { g.bf.Shutdown() }
 // Routes returns the model chosen for each pipeline step (shown in the UI).
 func (g *Gateway) Routes() map[Purpose]config.ModelRef { return g.routes }
 
+// HasRoute reports whether a pipeline step has a model (e.g. the optional jury).
+func (g *Gateway) HasRoute(p Purpose) bool { return g.routes[p].Model != "" }
+
 // Complete implements Client for the verification pipeline.
 func (g *Gateway) Complete(ctx context.Context, req Request) (Response, error) {
 	route, ok := g.routes[req.Purpose]
+	if req.Model != "" {
+		ref, err := config.ParseModelRef(req.Model)
+		if err != nil {
+			return Response{}, err
+		}
+		route, ok = ref, true
+	}
 	if !ok || route.Model == "" {
 		return Response{}, fmt.Errorf("no model routed for purpose %q", req.Purpose)
 	}
+	// The budget (if any) travels in ctx; BifrostContext reads through to it, so the Ledger sees it.
 	bctx := schemas.NewBifrostContext(ctx, time.Time{})
 	bctx.SetValue(ctxInternal, true)
 
@@ -95,7 +115,9 @@ func (g *Gateway) Complete(ctx context.Context, req Request) (Response, error) {
 		Model:     route.Model,
 		Input:     msgs,
 		Params:    &schemas.ChatParameters{MaxCompletionTokens: &maxTokens},
-		Fallbacks: g.fallbackList(route),
+	}
+	if !req.NoFallback {
+		breq.Fallbacks = g.fallbackList(route)
 	}
 	resp, berr := g.bf.ChatCompletionRequest(bctx, breq)
 	if berr != nil {
@@ -114,6 +136,9 @@ func (g *Gateway) Complete(ctx context.Context, req Request) (Response, error) {
 	}
 	if meta.Provider == "" {
 		meta.Provider, meta.Model = route.Provider, route.Model
+	}
+	if hit, _ := bctx.Value(ctxCacheHit).(bool); hit {
+		meta.Cached, meta.LatencyMs = true, 0
 	}
 	if resp.Usage != nil {
 		meta.PromptTokens = resp.Usage.PromptTokens

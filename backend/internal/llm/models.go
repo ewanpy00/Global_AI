@@ -43,7 +43,7 @@ func (g *Gateway) ListModels(ctx context.Context, provider string) ([]string, er
 // human-readable warnings. Free-tier line-ups change often, and a stale model id would
 // otherwise only surface as an error on the first verification.
 func (g *Gateway) CheckModels(ctx context.Context) []string {
-	refs := []config.ModelRef{g.routes[PurposeExtract], g.routes[PurposeJudge], g.chat}
+	refs := []config.ModelRef{g.routes[PurposeExtract], g.routes[PurposeJudge], g.routes[PurposeJury], g.chat}
 	refs = append(refs, g.fallbacks...)
 
 	cache := map[string][]string{}

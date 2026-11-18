@@ -100,6 +100,25 @@ print(reply.choices[0].message.content)`}</pre>
           The full report is returned in the <code>freshgate</code> field of the response and as <code>X-Freshgate-Score</code> /{" "}
           <code>X-Freshgate-Label</code> headers.
         </p>
+
+        <h2 className="mcp-title">Use it from an agent (MCP)</h2>
+        <p>
+          Freshgate is also a <b>Model Context Protocol</b> server. Agents in Claude Code, Claude Desktop, Cursor and others get four tools:{" "}
+          <code>check_freshness</code>, <code>correct_text</code>, <code>audit_site</code> and <code>compare_models</code>, so they can check their
+          own answer before sending it.
+        </p>
+        <h4>Claude Code (HTTP)</h4>
+        <pre className="code">{`claude mcp add --transport http freshgate ${window.location.origin}/mcp`}</pre>
+        <h4>Claude Desktop / Cursor (stdio)</h4>
+        <pre className="code">{`{
+  "mcpServers": {
+    "freshgate": {
+      "command": "/path/to/Global_AI/backend/bin/freshgate",
+      "args": ["-mcp"],
+      "env": { "TAVILY_API_KEY": "…", "GROQ_API_KEY": "…" }
+    }
+  }
+}`}</pre>
       </section>
 
       <section className="panel playground">

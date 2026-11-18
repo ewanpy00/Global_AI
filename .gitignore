@@ -4,3 +4,4 @@ backend/bin/
 web/node_modules/
 web/dist/
 *.log
+backend/eval-results/run-*.json

@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import { fetchConfig, type AppConfig } from "./api";
+import { Arena } from "./components/Arena";
+import { Audit } from "./components/Audit";
 import { Connector } from "./components/Connector";
 import { Documents } from "./components/Documents";
 import { Inspector } from "./components/Inspector";
+import { Quality } from "./components/Quality";
 
-type Tab = "inspector" | "documents" | "connector";
+type Tab = "inspector" | "arena" | "documents" | "audit" | "connector" | "quality";
 
 export function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
@@ -30,13 +33,22 @@ export function App() {
           <button className={tab === "inspector" ? "is-on" : ""} onClick={() => setTab("inspector")}>
             Inspector
           </button>
+          <button className={tab === "arena" ? "is-on" : ""} onClick={() => setTab("arena")}>
+            Arena
+          </button>
           {config?.documents?.available !== false && (
             <button className={tab === "documents" ? "is-on" : ""} onClick={() => setTab("documents")}>
               Documents
             </button>
           )}
+          <button className={tab === "audit" ? "is-on" : ""} onClick={() => setTab("audit")}>
+            Site audit
+          </button>
           <button className={tab === "connector" ? "is-on" : ""} onClick={() => setTab("connector")}>
-            Connector
+            Connect
+          </button>
+          <button className={tab === "quality" ? "is-on" : ""} onClick={() => setTab("quality")}>
+            Quality
           </button>
         </nav>
         <span className="spacer" />
@@ -47,7 +59,8 @@ export function App() {
             </span>
           ) : (
             <span className="status status-live" title={`fallbacks: ${config.fallbacks.join(", ") || "none"}`}>
-              <span className="live-dot" /> Live · Bifrost → {config.models.judge} · Tavily {config.search.depth}
+              <span className="live-dot" /> Live · Bifrost → {config.models.judge}
+              {config.jury ? ` + ${config.jury}` : ""} · Tavily {config.search.depth}
             </span>
           ))}
       </header>
@@ -65,9 +78,16 @@ export function App() {
             <div hidden={tab !== "inspector"}>
               <Inspector config={config} incoming={incoming} />
             </div>
+            <div hidden={tab !== "arena"}>
+              <Arena config={config} />
+            </div>
             <div hidden={tab !== "documents"}>
               <Documents config={config} />
             </div>
+            <div hidden={tab !== "audit"}>
+              <Audit config={config} />
+            </div>
+            {tab === "quality" && <Quality />}
             <div hidden={tab !== "connector"}>
               <Connector
                 config={config}

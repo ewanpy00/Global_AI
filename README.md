@@ -16,7 +16,7 @@ Built for the Geek Room Global AI Hackathon 2026, problem statement 06 (Tavily).
 | Live verification | Each claim gets a Tavily search with publish dates. A strong model (via Bifrost) compares the claim with the sources and returns `current`, `outdated`, `incorrect` or `unverifiable`, the current value, per-source stance, and a corrected sentence. |
 | Freshness scoring | A transparent 0–100 score per claim from verdict, evidence strength, source recency (decayed by a per-category half-life) and source authority, plus a weighted score for the whole answer. |
 
-Three ways to use it:
+Ways to use it:
 
 1. **Inspector** (web UI): paste any AI answer. Claims are highlighted in place (green, amber,
    red) and verified in parallel while you watch. Each card shows the current value, the
@@ -31,6 +31,32 @@ Three ways to use it:
    either **annotated** (a highlight and a reviewer note per claim, plus a report page) or
    **corrected** (outdated statements rewritten in place with current facts, each change
    marked and sourced). Agents can do the same in one call: `POST /api/documents/check`.
+4. **Staleness Arena**: ask one question, Bifrost sends it to several models (different
+   providers, different training cut-offs), every answer is fact-checked live, and the models are
+   ranked by how current their facts are. Answers stream in side by side with their claims
+   lighting up green and red, then the leaderboard animates in.
+5. **Site audit**: give it a docs site, help centre or pricing pages. Tavily Crawl walks the site,
+   every page goes through the pipeline, and the pages that tell customers something no longer
+   true come first, with the current value and a source for each stale fact.
+6. **MCP server**: agents in Claude Code, Claude Desktop, Cursor and others get the tools
+   `check_freshness`, `correct_text`, `audit_site` and `compare_models`, so an agent can check its
+   own answer before it sends it. HTTP at `/mcp`, or stdio with `freshgate -mcp`.
+7. **Quality**: a labelled benchmark (`make eval`) measures accuracy, calibration and cost, and
+   compares the plain pipeline with the full one. The Quality tab shows the latest results.
+
+## Accuracy features
+
+The plain pipeline (one search, one judge per claim) is the baseline. Each upgrade below can be
+switched off with `FRESHGATE_DISABLE`, and `make eval` measures what it adds:
+
+| Feature | What it does | Why |
+|---|---|---|
+| Official-source search (`official`) | The extractor names the entity's own domain (`python.org`, `stripe.com`, a regulator). A second, cheap Tavily search restricted to that domain runs in parallel, and its results go first. For leadership, company and statistics claims without a domain it is a news search over the past year. | Aggregators and old blog posts outrank official pages for many queries. |
+| Full-page reading (`fetch`) | When the official page's snippet is thin (pricing tables, changelogs), Tavily Extract pulls the page and the judge sees the paragraphs that mention the claim's keywords. | The decisive row of a pricing table is rarely in the snippet. |
+| Follow-up search (`followup`) | If the verdict is "unverifiable" or confidence is below 0.6, the judge proposes a better query; one more search runs and the claim is judged again. | Turns "couldn't tell" into an answer where the first search missed. |
+| Quote grounding (`grounding`) | Every stance must quote its source verbatim. Quotes not found in the source text are discarded, and a verdict with no verified quote has its confidence halved. | A deterministic guard against the judge inventing evidence. |
+| Second judge (`jury`) | An independent judge on another provider (picked automatically when two providers are configured) reads the same evidence in parallel. Agreement averages confidence; if one says "current" and the other "outdated", the claim is marked contested and left for a human. | Different model families have different blind spots and cut-offs. |
+| Shared searches (`share`) | Claims about the same entity and attribute share one search per run. | Fewer credits, same evidence. |
 
 ## How Tavily and Bifrost are used
 
@@ -53,13 +79,30 @@ Three ways to use it:
   `FRESHGATE_FALLBACK_MODELS`.
 - **Plugin hook.** The connector is a real `schemas.LLMPlugin` (`backend/internal/plugin`).
   Its `PostLLMHook` fact-checks the provider's answer before Bifrost returns it.
-- **Telemetry.** Provider, model, latency, tokens and fallback use come from Bifrost's
+- **Second judge.** The jury runs on a different provider through the same gateway, so
+  cross-checking two model families is one config line.
+- **Ledger plugin** (`backend/internal/llm/ledger.go`), a second `LLMPlugin` on the pipeline's own calls:
+  its `PreLLMHook` short-circuits identical requests from a cache (re-checking an answer, re-running
+  the benchmark or checking the same claim from several pages costs nothing) and rejects calls once
+  the run's token budget (`FRESHGATE_TOKEN_BUDGET`) is spent; its `PostLLMHook` stores replies and
+  charges their tokens to the run.
+- **Arena routing.** The arena asks each contestant with fallbacks disabled, so a ranking can never
+  quietly come from a fallback model.
+- **Telemetry.** Provider, model, latency, tokens, fallback use and cache hits come from Bifrost's
   response metadata and show up in the UI trace.
 
-**Tavily** handles every fact check: one search per claim, with `include_published_date` so
-recency can be scored, `include_answer` as a hint to the judge, and `advanced` depth by
-default. Results are cached for an hour, so repeated demo runs stay fast and don't use extra
-credits.
+**Tavily** handles every fact check:
+
+- **Search**, per claim, with `include_published_date` so recency can be scored, `include_answer`
+  as a hint to the judge, `advanced` depth with `chunks_per_source` by default, plus a
+  domain-restricted search (`include_domains`) on the official site, or a `topic: news` +
+  `time_range: year` search for leadership and company facts. The judge's follow-up query is a
+  third search when needed.
+- **Extract** reads the full official page when its snippet is too thin to judge.
+- **Crawl** walks a website for the site audit.
+
+Every Tavily call shows its credits in the trace and the run summary. Results are cached for an
+hour, so repeated demo runs stay fast and don't use extra credits.
 
 ## PDF documents
 
@@ -154,6 +197,39 @@ make test               # Go tests (incl. an end-to-end Bifrost test) + TS typec
 make models             # list model ids your provider keys can use
 ```
 
+### Benchmark
+
+```bash
+make eval        # live: plain pipeline vs Freshgate on ~48 labelled claims + 5 answers
+make eval-demo   # offline, on the demo fixtures (checks the harness only)
+```
+
+The dataset (`backend/internal/eval/dataset.json`) has stale claims (old versions, former CEOs,
+changed prices, repealed or adopted laws), claims that are still true, and claims about fictional
+entities that no source can confirm. Labels are as of November 2026; facts age, so re-check them
+before quoting numbers later. Each claim has the acceptable new values, so the benchmark also
+checks that a caught stale claim got the right current value. The answers measure extraction
+recall and precision, and whether timeless statements ("founded in 2015") are wrongly extracted.
+
+Reported: verdict accuracy, macro-F1, stale precision and recall, coverage (claims with a definite
+verdict), current-value accuracy, Brier score and calibration error of the freshness score,
+extraction recall/precision, latency p50/p95, model calls, tokens and Tavily credits per claim.
+Results go to `backend/eval-results/latest.json` and the Quality tab. A full live run costs about
+2-3 Tavily credits per claim per configuration.
+
+### MCP
+
+```bash
+claude mcp add --transport http freshgate http://localhost:8080/mcp   # Claude Code, server running
+```
+
+Claude Desktop / Cursor (stdio, no server needed):
+
+```json
+{"mcpServers": {"freshgate": {"command": "/path/to/Global_AI/backend/bin/freshgate", "args": ["-mcp"],
+  "env": {"TAVILY_API_KEY": "…", "GROQ_API_KEY": "…"}}}}
+```
+
 ### Connector example
 
 ```python
@@ -188,26 +264,33 @@ as a single chunk.
 | `GET /api/documents/{id}/corrected` | Corrected PDF; `?claims=c1,c3` limits which fixes are applied |
 | `POST /api/documents/check` | One call: PDF in, `?output=annotated\|corrected\|json` out; score in `X-Freshgate-Score` |
 | `GET /v1/models` | Configured models |
+| `POST /api/arena` `{"question", "models"?}` | SSE: `arena_models`, `arena_answer`, `arena_event` (pipeline events per model), `arena_result`, `arena_done` (leaderboard) |
+| `POST /api/audit` `{"url", "limit"?}` | SSE: `audit_pages`, `page_event`, `audit_page`, `audit_done` (pages ranked stalest first) |
+| `GET /api/eval` | Latest benchmark result |
+| `POST /mcp` | MCP (JSON-RPC, Streamable HTTP): `check_freshness`, `correct_text`, `audit_site`, `compare_models` |
 
 ## Layout
 
 ```
 backend/
   cmd/freshgate/        entrypoint: config → Bifrost + plugin → pipeline → HTTP
-  internal/llm/         Bifrost gateway (Account, routing, fallbacks), model interface
+  internal/llm/         Bifrost gateway (Account, routing, fallbacks, jury), ledger plugin (cache + budget)
   internal/plugin/      Bifrost LLMPlugin: the connector (annotate / correct / report)
-  internal/verify/      pipeline, prompts, span location, scoring, fixes, footnote
-  internal/search/      Tavily client with cache
+  internal/verify/      pipeline, evidence gathering, grounding, jury, prompts, scoring, fixes
+  internal/search/      Tavily client (Search, Extract, Crawl) with cache and credit accounting
+  internal/eval/        benchmark: labelled datasets, metrics, ablation
+  internal/mcp/         Model Context Protocol server (HTTP + stdio)
   internal/document/    PDFium (WebAssembly): text with positions, page images, annotations,
                         in-place corrections, report page
   internal/demo/        offline fixtures for demo mode
-  internal/server/      HTTP: SSE, OpenAI-compatible endpoint, static UI, integration tests
-web/                    React + Vite UI (Inspector, Documents, Connector playground)
+  internal/server/      HTTP: SSE, OpenAI-compatible endpoint, arena, site audit, MCP tools, static UI
+web/                    React + Vite UI (Inspector, Arena, Documents, Site audit, Connect, Quality)
 ```
 
 ## Roadmap
 
 - Documents: DOCX, OCR for scanned PDFs, and true text replacement (redaction) in PDFs.
 - Bifrost semantic cache for repeated claims across users.
-- Domain allow-lists per category (official docs for API claims, regulators for laws).
+- Watch mode: re-check saved answers and documents on a schedule and alert when a fact goes stale.
+- Value timeline per claim (how a price or version changed over time, from dated sources).
 - Browser extension that overlays highlights on ChatGPT and Claude.

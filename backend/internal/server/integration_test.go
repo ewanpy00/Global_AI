@@ -97,8 +97,8 @@ func (f *fakeOpenAI) seen() []string {
 
 type fakeSearch struct{}
 
-func (fakeSearch) Search(_ context.Context, q string) (*search.Response, error) {
-	return &search.Response{Query: q, Results: []search.Result{{
+func (fakeSearch) Search(_ context.Context, q search.Query) (*search.Response, error) {
+	return &search.Response{Query: q.Text, Results: []search.Result{{
 		Title: "Acme pricing", URL: "https://acme.example/pricing", PublishedDate: "2026-10-01",
 		Content: "Pro: $14 per month.", Score: 0.9,
 	}}}, nil
@@ -122,6 +122,7 @@ func newLiveTestServerWith(t *testing.T, providerName, key string, provider *fak
 		JudgeModel:       config.ModelRef{Provider: providerName, Model: "fake-judge"},
 		ChatModel:        config.ModelRef{Provider: providerName, Model: "fake-chat"},
 		MaxRetries:       3,
+		CacheTTLMinutes:  60,
 		TavilyKey:        "test",
 		MaxClaims:        5,
 		Concurrency:      2,
@@ -389,5 +390,60 @@ func TestKeylessOllamaThroughBifrost(t *testing.T) {
 	t.Logf("ollama endpoints hit: %v", provider.paths)
 	if cr.Freshgate.Report == nil || !strings.Contains(cr.Choices[0].Message.Content, "Freshness check:") {
 		t.Fatalf("ollama path did not verify (provider saw %v): %s", provider.paths, body)
+	}
+}
+
+func runVerify(t *testing.T, url string) verify.Report {
+	t.Helper()
+	b, _ := json.Marshal(map[string]string{"text": chatAnswer})
+	res, err := http.Post(url+"/api/verify", "application/json", bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var rep verify.Report
+	for _, e := range readSSE(t, res) {
+		if e.Event == verify.EvReport {
+			_ = json.Unmarshal(e.Data, &rep)
+		}
+		if e.Event == verify.EvError {
+			t.Fatalf("error: %s", e.Data)
+		}
+	}
+	return rep
+}
+
+func TestLedgerPluginCachesRepeatedCalls(t *testing.T) {
+	ts, provider := newLiveTestServer(t)
+	first := runVerify(t, ts.URL)
+	calls := len(provider.seen())
+	second := runVerify(t, ts.URL)
+	if first.Summary.Usage.CachedLLMCalls != 0 {
+		t.Fatalf("first run should not hit the cache: %+v", first.Summary.Usage)
+	}
+	if got := second.Summary.Usage.CachedLLMCalls; got != 2 {
+		t.Fatalf("second run: %d cached calls, want 2 (extract + judge): %+v", got, second.Summary.Usage)
+	}
+	if len(provider.seen()) != calls {
+		t.Fatalf("cached run still reached the provider (%d → %d calls)", calls, len(provider.seen()))
+	}
+	if second.Claims[0].Result.Verdict != verify.VerdictOutdated {
+		t.Fatalf("cached verdict: %+v", second.Claims[0].Result)
+	}
+}
+
+func TestLedgerPluginEnforcesTokenBudget(t *testing.T) {
+	ts, _, gw := newLiveTestServerWith(t, "openai", "k", &fakeOpenAI{})
+	_ = ts
+	// The fake provider charges 30 tokens per call: the extract call spends the whole budget,
+	// so the judge call must be stopped inside Bifrost.
+	engine := &verify.Engine{LLM: gw, Search: fakeSearch{}, TokenBudget: 25, MaxClaims: 5}
+	rep, err := engine.Run(context.Background(), "Acme Pro costs $10 per month and more words here.", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := rep.Claims[0].Result
+	if r.Verdict != verify.VerdictUnverifiable || !strings.Contains(r.Error, "token budget") {
+		t.Fatalf("judge call should be blocked by the budget: %+v", r)
 	}
 }

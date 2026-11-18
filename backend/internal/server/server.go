@@ -23,6 +23,7 @@ import (
 	"github.com/ewanpy00/Global_AI/backend/internal/config"
 	"github.com/ewanpy00/Global_AI/backend/internal/document"
 	"github.com/ewanpy00/Global_AI/backend/internal/llm"
+	"github.com/ewanpy00/Global_AI/backend/internal/search"
 	"github.com/ewanpy00/Global_AI/backend/internal/verify"
 )
 
@@ -37,6 +38,12 @@ type Server struct {
 	// Docs and DocStore enable the PDF endpoints (nil disables them).
 	Docs     *document.Engine
 	DocStore *document.Store
+	// Crawler walks sites for the audit (Tavily Crawl; nil disables it).
+	Crawler search.Crawler
+	// ArenaModels are the default Staleness Arena contestants (provider/model).
+	ArenaModels []string
+	// EvalFile is the benchmark result the Quality tab shows (written by `make eval`).
+	EvalFile string
 
 	sample samplePDF
 }
@@ -60,6 +67,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/verify", s.handleVerify)
 	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("GET /v1/models", s.handleModels)
+	mux.HandleFunc("POST /api/arena", s.handleArena)
+	mux.HandleFunc("POST /api/audit", s.handleAudit)
+	mux.HandleFunc("GET /api/eval", s.handleEval)
+	mux.Handle("/mcp", s.MCP())
 	s.documentRoutes(mux)
 	mux.Handle("/", s.staticHandler())
 	return withCORS(withLogging(mux))
@@ -95,6 +106,12 @@ func (s *Server) handleConfig(w http.ResponseWriter, _ *http.Request) {
 		"freshness_band": map[string]int{"fresh": 75, "stale": 45},
 		"warnings":       s.Warnings,
 		"documents":      map[string]any{"available": s.Docs != nil, "max_mb": document.MaxBytes >> 20, "max_pages": document.MaxPages},
+		"features":       s.features(),
+		"jury":           s.juryModel(),
+		"arena":          map[string]any{"models": s.ArenaModels},
+		"audit":          map[string]any{"available": s.Crawler != nil, "default_pages": defaultAuditPages, "max_pages": maxAuditPages},
+		"token_budget":   s.Cfg.TokenBudget,
+		"cache_hits":     s.cacheHits(),
 	})
 }
 
@@ -128,6 +145,45 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sse.send(verify.EvReport, report)
+}
+
+func (s *Server) features() verify.Features {
+	if s.Engine == nil {
+		return verify.Features{}
+	}
+	return s.Engine.Features
+}
+
+func (s *Server) juryModel() string {
+	if !s.features().Jury {
+		return ""
+	}
+	if s.Cfg.Demo {
+		return "demo/fixture-jury"
+	}
+	return s.Cfg.JuryModel.String()
+}
+
+func (s *Server) cacheHits() int64 {
+	if s.Gateway == nil || s.Gateway.Ledger == nil {
+		return 0
+	}
+	return s.Gateway.Ledger.Hits()
+}
+
+// handleEval serves the latest benchmark result (see `make eval`).
+func (s *Server) handleEval(w http.ResponseWriter, _ *http.Request) {
+	if s.EvalFile == "" {
+		writeError(w, http.StatusNotFound, "no benchmark file configured")
+		return
+	}
+	b, err := os.ReadFile(s.EvalFile)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "no benchmark results yet: run `make eval` (or `make eval-demo` offline)")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(b)
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
@@ -181,9 +237,9 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Freshgate-Mode")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Freshgate-Mode, Mcp-Session-Id, Mcp-Protocol-Version")
 		w.Header().Set("Access-Control-Expose-Headers", "X-Freshgate-Score, X-Freshgate-Label, X-Freshgate-Report, X-Freshgate-Edits, X-Freshgate-Document, Content-Disposition")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -211,7 +267,7 @@ func withLogging(next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/v1/") {
+		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/v1/") || r.URL.Path == "/mcp" {
 			log.Printf("%s %s %d %s", r.Method, r.URL.Path, rec.status, time.Since(start).Round(time.Millisecond))
 		}
 	})

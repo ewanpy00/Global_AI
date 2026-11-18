@@ -16,6 +16,8 @@ type Purpose string
 const (
 	PurposeExtract Purpose = "extract" // find time-sensitive claims: cheap, fast model
 	PurposeJudge   Purpose = "judge"   // compare a claim with evidence: strong model
+	PurposeJury    Purpose = "jury"    // independent second judge on another provider (cross-check)
+	PurposeAnswer  Purpose = "answer"  // Staleness Arena: a model answers the user's question itself
 )
 
 type Message struct {
@@ -28,6 +30,10 @@ type Request struct {
 	System    string
 	Messages  []Message
 	MaxTokens int
+	// Model overrides the route for Purpose ("provider/model"). The arena uses it to ask several models.
+	Model string
+	// NoFallback disables Bifrost fallbacks, so the answer is guaranteed to come from Model.
+	NoFallback bool
 }
 
 // CallMeta describes how Bifrost served a call. It feeds the pipeline trace in the UI,
@@ -40,6 +46,8 @@ type CallMeta struct {
 	LatencyMs        int64   `json:"latency_ms"`
 	PromptTokens     int     `json:"prompt_tokens"`
 	CompletionTokens int     `json:"completion_tokens"`
+	// Cached is true when the Bifrost ledger plugin served the reply from its cache (no provider call).
+	Cached bool `json:"cached,omitempty"`
 }
 
 type Response struct {

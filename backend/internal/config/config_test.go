@@ -5,7 +5,7 @@ import "testing"
 func clearEnv(t *testing.T) {
 	for _, k := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY",
 		"OPENROUTER_API_KEY", "OLLAMA_BASE_URL", "TAVILY_API_KEY", "FRESHGATE_EXTRACT_MODEL", "FRESHGATE_JUDGE_MODEL",
-		"FRESHGATE_CHAT_MODEL", "FRESHGATE_DEMO", "FRESHGATE_MAX_RETRIES"} {
+		"FRESHGATE_CHAT_MODEL", "FRESHGATE_DEMO", "FRESHGATE_MAX_RETRIES", "FRESHGATE_JURY_MODEL", "FRESHGATE_ARENA_MODELS", "FRESHGATE_DISABLE"} {
 		t.Setenv(k, "")
 	}
 }
@@ -81,5 +81,31 @@ func TestRetriesCanBeZero(t *testing.T) {
 	cfg, _ := Load()
 	if cfg.MaxRetries != 0 {
 		t.Fatalf("MaxRetries = %d", cfg.MaxRetries)
+	}
+}
+
+func TestJuryAndArenaDefaults(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("TAVILY_API_KEY", "t")
+	t.Setenv("GROQ_API_KEY", "g")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.JuryModel.Model != "" {
+		t.Fatalf("one provider should not get a jury, got %s", cfg.JuryModel)
+	}
+	t.Setenv("GEMINI_API_KEY", "x")
+	cfg, _ = Load()
+	if cfg.JuryModel.String() != "gemini/gemini-2.5-flash" {
+		t.Fatalf("jury on the other provider expected, got %s", cfg.JuryModel)
+	}
+	if len(cfg.ArenaModels) < 2 {
+		t.Fatalf("arena defaults: %v", cfg.ArenaModels)
+	}
+	t.Setenv("FRESHGATE_DISABLE", "jury, followup")
+	cfg, _ = Load()
+	if cfg.JuryModel.Model != "" || !cfg.Disabled["followup"] {
+		t.Fatalf("disable list: jury=%s disabled=%v", cfg.JuryModel, cfg.Disabled)
 	}
 }
