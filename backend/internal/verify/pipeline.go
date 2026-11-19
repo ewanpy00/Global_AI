@@ -152,7 +152,13 @@ func (r *run) verifyAll(ctx context.Context, claims []Claim) *Report {
 	if e.Features.ShareSearch {
 		shareQueries(claims)
 	}
-	r.emit(Event{EvClaims, map[string]any{"claims": claims}})
+	// A nil slice (no claims found) must still serialize as [], not null: the frontend calls
+	// .map() on it unconditionally.
+	sent := claims
+	if sent == nil {
+		sent = []Claim{}
+	}
+	r.emit(Event{EvClaims, map[string]any{"claims": sent}})
 	report := &Report{ID: newID(), Text: r.text, CheckedAt: r.started}
 
 	r.emit(Event{EvStage, map[string]string{"stage": "verifying"}})
